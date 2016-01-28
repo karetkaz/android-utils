@@ -5,7 +5,7 @@ using AssyncRequest class:
 ```
 ...
 final URL url = new URL("http://host:8080/data.xml");
-MyActivity.this.request = new AsyncRequest<DataEntity>(AsyncRequest.Method.GET, url) {
+AsyncRequest<DataEntity> request = new AsyncRequest<DataEntity>(AsyncRequest.Method.GET, url) {
 
 	@Override
 	protected DataEntity readResponse(InputStream in) throws Exception {
@@ -24,9 +24,9 @@ MyActivity.this.request = new AsyncRequest<DataEntity>(AsyncRequest.Method.GET, 
 };
 
 // allow server to compress the response
-MyActivity.this.request.acceptGzipEncoding();
+request.acceptGzipEncoding();
 
 // execute the request
-MyActivity.this.request.execute();
+request.execute();
 ...
 ```
