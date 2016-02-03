@@ -71,6 +71,16 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 	protected abstract void onResult(Entity result);
 
 	// request
+	public URL getUrl() {
+		return url;
+	}
+	public Method getMethod() {
+		return method;
+	}
+	public boolean isAcceptGzip() {
+		return acceptGzip;
+	}
+
 	public AsyncRequest acceptGzipEncoding() {
 		this.assertState(State.INIT);
 		this.acceptGzip = true;
@@ -88,13 +98,7 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 	// cancel
 	public void setCancelable() {
 		this.assertState(State.INIT);
-		this.cancel = false;
-	}
-	public void cancel() {
-		if (this.cancel == null) {
-			return;
-		}
-		this.cancel = true;
+		this.cancelable = true;
 	}
 
 	// response
@@ -118,7 +122,7 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 		OutputStream out = null;
 		try {
 			this.state = State.SEND;
-			if (this.cancel != null && this.cancel) {
+			if (this.isCancelled()) {
 				throw new InterruptedIOException();
 			}
 			// open connection
@@ -137,7 +141,7 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 			// send payload
 			if (this.method.hasPayload) {
 				out = this.connection.getOutputStream();
-				if (this.cancel != null) {
+				if (this.cancelable) {
 					out = new CancelableOutputStream(out);
 				}
 				if (this.debugStream != null) {
@@ -148,7 +152,7 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 
 			// retrieve result
 			this.state = State.READ;
-			if (this.cancel != null && this.cancel) {
+			if (this.isCancelled()) {
 				throw new InterruptedIOException();
 			}
 			this.responseCode = this.connection.getResponseCode();
@@ -156,7 +160,7 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 
 			in = this.connection.getInputStream();
 			// use the cancelable stream
-			if (this.cancel != null) {
+			if (this.cancelable) {
 				in = new CancelableInputStream(in);
 			}
 			if (CONTENT_ENCODING_GZIP.equals(this.connection.getContentEncoding())) {
@@ -230,19 +234,68 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 	private Exception error = null;
 
 	private volatile State state = State.INIT;
-	private volatile Boolean cancel = null;
+	private volatile boolean cancelable = false;
 
 	private final HttpURLConnection connection;
-	private final DebugStream debugStream = null;//new DebugStream();
+	private final DebugStream debugStream = new DebugStream();
+
+	/// cancel reading response when {@cancel} is true;
+	private class CancelableInputStream extends InputStream {
+		private final InputStream stream;
+
+		private CancelableInputStream(InputStream stream) {
+			this.stream = stream;
+		}
+
+		@Override
+		public int read() throws IOException {
+			if (AsyncRequest.this.isCancelled()) {
+				throw new InterruptedIOException();
+			}
+			return stream.read();
+		}
+		@Override
+		public int read(byte[] buffer, int byteOffset, int byteCount) throws IOException {
+			if (AsyncRequest.this.isCancelled()) {
+				throw new InterruptedIOException();
+			}
+			return stream.read(buffer, byteOffset, byteCount);
+		}
+
+	}
+
+	/// cancel sending request when {@cancel} is true;
+	private class CancelableOutputStream extends OutputStream {
+		private final OutputStream stream;
+
+		private CancelableOutputStream(OutputStream stream) {
+			this.stream = stream;
+		}
+
+		@Override
+		public void write(int oneByte) throws IOException {
+			if (AsyncRequest.this.isCancelled()) {
+				throw new InterruptedIOException();
+			}
+			stream.write(oneByte);
+		}
+		@Override
+		public void write(byte[] buffer, int offset, int count) throws IOException {
+			if (AsyncRequest.this.isCancelled()) {
+				throw new InterruptedIOException();
+			}
+			stream.write(buffer, offset, count);
+		}
+	}
 
 	// utility class to check communication
 	private static final class DebugStream {
 
 		// configuration
-		boolean logResponseHeaders = true;
-		boolean logRequestHeaders = true;
-		boolean logResponseBody = true;
-		boolean logRequestBody = true;
+		boolean logResponseHeaders = !true;
+		boolean logRequestHeaders = !true;
+		boolean logResponseBody = !true;
+		boolean logRequestBody = !true;
 		boolean logStatistics = true;
 		boolean logStackTrace = !true;
 		int maxLogLength = 2048;
@@ -409,13 +462,13 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 				if (requestSize > 0) {
 					long requestTime = this.tsRead - this.tsSend;
 					log.append(", request: ").append(formatSize(requestSize))
-							.append(" in ").append(requestTime / 1000.).append(" sec")
-							.append(" (").append(formatSpeed(requestSize, requestTime)).append(')');
+						.append(" in ").append(requestTime / 1000.).append(" sec")
+						.append(" (").append(formatSpeed(requestSize, requestTime)).append(')');
 				}
 				long responseTime = this.tsEnd - this.tsRead;
 				log.append(", response: ").append(formatSize(this.responseSize))
-						.append(" in ").append(responseTime / 1000.).append(" sec")
-						.append(" (").append(formatSpeed(this.responseSize, responseTime)).append(')');
+					.append(" in ").append(responseTime / 1000.).append(" sec")
+					.append(" (").append(formatSpeed(this.responseSize, responseTime)).append(')');
 			}
 			Log.d(TAG, log.append(text.toString()).toString(), this.stacktrace);
 		}
@@ -507,55 +560,6 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 				return String.format("%.2f KB/s", (double) sizeBytes / (1 << 10));
 			}
 			return String.format("%d Bytes/s", sizeBytes);
-		}
-	}
-
-	/// cancel reading response when {@cancel} is true;
-	private class CancelableInputStream extends InputStream {
-		private final InputStream stream;
-
-		private CancelableInputStream(InputStream stream) {
-			this.stream = stream;
-		}
-
-		@Override
-		public int read() throws IOException {
-			if (AsyncRequest.this.cancel) {
-				throw new InterruptedIOException();
-			}
-			return stream.read();
-		}
-		@Override
-		public int read(byte[] buffer, int byteOffset, int byteCount) throws IOException {
-			if (AsyncRequest.this.cancel) {
-				throw new InterruptedIOException();
-			}
-			return stream.read(buffer, byteOffset, byteCount);
-		}
-
-	}
-
-	/// cancel sending request when {@cancel} is true;
-	private class CancelableOutputStream extends OutputStream {
-		private final OutputStream stream;
-
-		private CancelableOutputStream(OutputStream stream) {
-			this.stream = stream;
-		}
-
-		@Override
-		public void write(int oneByte) throws IOException {
-			if (AsyncRequest.this.cancel) {
-				throw new InterruptedIOException();
-			}
-			stream.write(oneByte);
-		}
-		@Override
-		public void write(byte[] buffer, int offset, int count) throws IOException {
-			if (AsyncRequest.this.cancel) {
-				throw new InterruptedIOException();
-			}
-			stream.write(buffer, offset, count);
 		}
 	}
 }
