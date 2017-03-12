@@ -1,3 +1,5 @@
+package kmz.utils;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,8 +15,8 @@ import java.util.zip.GZIPInputStream;
 
 import android.os.AsyncTask;
 import android.util.Log;
-import com.squareup.okhttp.OkHttpClient;
-import org.apache.http.protocol.HTTP;
+import okhttp3.OkHttpClient;
+import okhttp3.OkUrlFactory;
 
 // TODO: JavaDoc
 public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entity> {
@@ -58,8 +60,10 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 		//this.connection = (HttpURLConnection) this.url.openConnection();
 
 		// using okHttp connection.disconnect closes the connection.
+
 		OkHttpClient client = new OkHttpClient();
-		this.connection = client.open(this.url);
+		OkUrlFactory factory = new OkUrlFactory(client);
+		this.connection = factory.open(this.url);
 	}
 
 	protected void sendRequest(OutputStream out) throws Exception {}
@@ -292,12 +296,12 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 	private static final class DebugStream {
 
 		// configuration
-		boolean logResponseHeaders = !true;
-		boolean logRequestHeaders = !true;
-		boolean logResponseBody = !true;
-		boolean logRequestBody = !true;
+		boolean logResponseHeaders = true;
+		boolean logRequestHeaders = true;
+		boolean logResponseBody = true;
+		boolean logRequestBody = true;
 		boolean logStatistics = true;
-		boolean logStackTrace = !true;
+		boolean logStackTrace = true;
 		int maxLogLength = 2048;
 
 		long tsStart = 0;
@@ -343,13 +347,14 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 			}
 		};
 
+		private static final String HTTP_CONTENT_TYPE = "Content-Type";
 		private static final String BINARY_DATA = "<binary data>";
 		private static final String MISSING_HEADERS = "<no headers>";
 		private static final String TAG = "AsyncRequest.DbgStream";
 
-		public DebugStream() throws IOException {
+		private DebugStream() throws IOException {
 			if (this.logStackTrace) {
-				this.stacktrace = new Exception();
+				this.stacktrace = new Exception("Stack trace");
 			}
 		}
 
@@ -509,7 +514,7 @@ public abstract class AsyncRequest<Entity> extends AsyncTask<Object, Void, Entit
 		}
 
 		boolean isTextContent(Map<String, List<String>> headers) {
-			List<String> header = headers.get(HTTP.CONTENT_TYPE);
+			List<String> header = headers.get(HTTP_CONTENT_TYPE);
 			if (header == null) {
 				header = Collections.emptyList();
 			}

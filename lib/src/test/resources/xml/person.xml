@@ -1,0 +1,16 @@
+<person sex="other">
+	<id>1234</id>
+	<name>Joe Doe</name>
+	<home_address type="home">
+		<street>101 Sweet Home</street>
+		<phone>333-3333</phone>
+	</home_address>
+	<home_address type="home2">
+		<street>101 Sweet Home</street>
+		<phone>333-3333</phone>
+	</home_address>
+	<work_address>
+		<street>303 Office Street</street>
+		<phone>444-4444</phone>
+	</work_address>
+</person>
