@@ -1,0 +1,22 @@
+package kmz.utils.entity;
+
+import kmz.utils.XmlParser;
+import kmz.utils.mapper.MultipliedIntegerMapper;
+
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
+import java.util.List;
+
+public class ValuesList {
+	@XmlElement(name = "value")
+	@XmlJavaTypeAdapter(value = MultipliedIntegerMapper.class)
+	@XmlParser.Name(name = "value", mapper = MultipliedIntegerMapper.class)
+	List<Integer> values;
+
+	@Override
+	public String toString() {
+		return "Result{" +
+				"values=" + values +
+				'}';
+	}
+}

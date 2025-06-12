@@ -1,15 +1,15 @@
 # android-utils
 Utility classes for Android
 
-using AssyncRequest class:
-```
-...
+using AsyncRequest class:
+```java
+// ...
 final URL url = new URL("http://host:8080/data.xml");
 AsyncRequest<DataEntity> request = new AsyncRequest<DataEntity>(AsyncRequest.Method.GET, url) {
 
 	@Override
 	protected DataEntity readResponse(InputStream in) throws Exception {
-		return XmlDeserializer.deserialize(in, DataEntity.class);
+		return new XmlParser().readValue(in, DataEntity.class);
 	}
 
 	@Override
@@ -28,5 +28,6 @@ request.acceptGzipEncoding();
 
 // execute the request
 request.execute();
-...
+
+// ...
 ```
