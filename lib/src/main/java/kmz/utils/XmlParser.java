@@ -97,26 +97,6 @@ public class XmlParser {
 		return type.cast(result);
 	}
 
-	protected String readText(int depth) throws XmlPullParserException, IOException {
-		require(XmlPullParser.TEXT, depth, null);
-		String text = parser.getText();
-		parser.next();
-		return text;
-	}
-
-	protected boolean peek(int type, int depth) throws XmlPullParserException, IOException {
-		if (type != XmlPullParser.TEXT && parser.getEventType() == XmlPullParser.TEXT) {
-			// skip blank text (tabs spaces and new lines) between tags
-			if (parser.getText().isBlank()) {
-				parser.next();
-			}
-		}
-		if (depth >= 0 && depth != parser.getDepth()) {
-			return false;
-		}
-		return type == parser.getEventType();
-	}
-
 	protected void require(int type, int depth, String name) throws XmlPullParserException, IOException {
 		if (!peek(type, -1)) {
 			throw new XmlPullParserException("expected token: " + XmlPullParser.TYPES[type] + " at: " + parser.getPositionDescription());
@@ -135,6 +115,33 @@ public class XmlParser {
 		parser.next();
 	}
 
+	protected boolean peek(int type, int depth) throws XmlPullParserException, IOException {
+		if (type != XmlPullParser.TEXT && parser.getEventType() == XmlPullParser.TEXT) {
+			// skip blank text (tabs spaces and new lines) between tags
+			if (parser.getText().isBlank()) {
+				parser.next();
+			}
+		}
+		if (depth >= 0 && depth != parser.getDepth()) {
+			return false;
+		}
+		return type == parser.getEventType();
+	}
+
+	protected void skip() throws XmlPullParserException, IOException {
+		if (peek(XmlPullParser.TEXT, -1)) {
+			parser.next();
+			return;
+		}
+
+		int depth = parser.getDepth();
+		require(XmlPullParser.START_TAG, depth, null);
+		while (!peek(XmlPullParser.END_TAG, depth)) {
+			parser.next();
+		}
+		consume(XmlPullParser.END_TAG, depth, null);
+	}
+
 
 	/**
 	 * Internal mapper for parsing value types, like text, number, ...
@@ -148,81 +155,28 @@ public class XmlParser {
 
 		protected T parse(XmlParser parser, TypeInfo type) throws Exception {
 			int depth = parser.parser.getDepth();
-			if (type.name == null || type.name.isEmpty()) {
-				return valueOf(parser.readText(depth));
+			int wrapped = depth;
+
+			if (type.name != null && !type.name.isEmpty()) {
+				parser.consume(XmlPullParser.START_TAG, depth, type.name);
+				if (parser.peek(XmlPullParser.END_TAG, depth)) {
+					parser.consume(XmlPullParser.END_TAG, depth, type.name);
+					// no text for constructs like: `<tag/>`
+					return valueOf(null);
+				}
+				wrapped = depth + 1;
 			}
 
-			parser.consume(XmlPullParser.START_TAG, depth, type.name);
-			if (parser.peek(XmlPullParser.END_TAG, depth)) {
+			parser.require(XmlPullParser.TEXT, depth, null);
+			T result = valueOf(parser.parser.getText());
+			parser.parser.next();
+
+			if (wrapped != depth) {
 				parser.consume(XmlPullParser.END_TAG, depth, type.name);
-				// no text for constructs like: `<tag/>`
-				return valueOf(null);
 			}
-
-			T result = valueOf(parser.readText(depth));
-			parser.consume(XmlPullParser.END_TAG, depth, type.name);
 			return result;
 		}
-
-		protected void skip(XmlParser parser) throws XmlPullParserException, IOException {
-			if (parser.peek(XmlPullParser.TEXT, -1)) {
-				parser.parser.next();
-				return;
-			}
-
-			int depth = parser.parser.getDepth();
-			parser.require(XmlPullParser.START_TAG, depth, null);
-			while (!parser.peek(XmlPullParser.END_TAG, depth)) {
-				parser.parser.next();
-			}
-			parser.consume(XmlPullParser.END_TAG, depth, null);
-		}
 	}
-
-
-	/**
-	 * Internal mapper for custom types, delegates the conversion to the mapper.
-	 * It can be used for duration, datetime or any other custom format conversion.
-	 */
-	private static class CustomParser extends ValueParser<Object> {
-		private final Mapper<?> mapper;
-
-		public CustomParser(Mapper<?> mapper) {
-			this.mapper = mapper;
-		}
-
-		public CustomParser(Name name) throws Exception {
-			this(name.mapper().getDeclaredConstructor().newInstance());
-		}
-
-		@Override
-		public Object valueOf(String value) throws Exception {
-			return mapper.valueOf(value);
-		}
-	}
-
-
-	/**
-	 * Internal mapper for enumerated types, returns null in case there are no matches
-	 */
-	private static class EnumParser extends ValueParser<Enum<?>> {
-		private final Enum<?>[] values;
-
-		public EnumParser(Class<?> type) {
-			this.values = (Enum<?>[]) type.getEnumConstants();
-		}
-
-		@Override
-		public Enum<?> valueOf(String name) {
-			for (Enum<?> value : values) {
-				if (name.equals(value.name())) {
-					return value;
-				}
-			}
-			return null;
-		}
-	}
-
 
 	/**
 	 * Internal mapper for parsing arrays and collections
@@ -236,26 +190,27 @@ public class XmlParser {
 
 		@Override
 		protected ArrayList<Object> parse(XmlParser parser, TypeInfo type) throws Exception {
-			ArrayList<Object> result = new ArrayList<>();
 			int depth = parser.parser.getDepth();
 			int wrapped = depth;
 
 			if (!type.wrapper.isEmpty()) {
 				parser.consume(XmlPullParser.START_TAG, depth, type.wrapper);
+				if (parser.peek(XmlPullParser.END_TAG, depth)) {
+					parser.consume(XmlPullParser.END_TAG, depth, type.wrapper);
+					// null array in case of: `<values/>`
+					return null;
+				}
 				wrapped = depth + 1;
 			}
 
+			ArrayList<Object> result = new ArrayList<>();
 			while (!parser.peek(XmlPullParser.END_TAG, -1)) {
 				if (wrapped == depth && !type.name.equals(parser.parser.getName())) {
 					// stop parsing if list tag names change, probably a different list
 					break;
 				}
 				parser.require(XmlPullParser.START_TAG, wrapped, type.name);
-				Object value = values.mapper.parse(parser, values);
-				if (value == null) {
-					throw new XmlPullParserException("Invalid array element");
-				}
-				result.add(value);
+				result.add(values.mapper.parse(parser, values));
 			}
 
 			if (wrapped != depth) {
@@ -265,7 +220,6 @@ public class XmlParser {
 			return result;
 		}
 	}
-
 
 	/**
 	 * Internal mapper for objects: recursive parsing of the subtree
@@ -317,11 +271,21 @@ public class XmlParser {
 
 		@Override
 		protected Object parse(XmlParser parser, TypeInfo type) throws Exception {
-			Object result = this.constructor.newInstance();
 			int depth = parser.parser.getDepth();
 			int wrapped = depth;
 
+			if (!type.wrapper.isEmpty()) {
+				parser.consume(XmlPullParser.START_TAG, depth, type.wrapper);
+				if (parser.peek(XmlPullParser.END_TAG, depth)) {
+					parser.consume(XmlPullParser.END_TAG, depth, type.wrapper);
+					// null object in case of: `<object/>`
+					return null;
+				}
+				wrapped = depth + 1;
+			}
+
 			// deserialize attributes first.
+			Object result = this.constructor.newInstance();
 			parser.require(XmlPullParser.START_TAG, wrapped, type.name);
 			for (int i = 0; i < parser.parser.getAttributeCount(); i += 1) {
 				TypeInfo field = this.fieldOf(parser.parser.getAttributeName(i));
@@ -331,17 +295,11 @@ public class XmlParser {
 				field.setValue(result, field.mapper.valueOf(parser.parser.getAttributeValue(i)));
 			}
 
-			if (!type.wrapper.isEmpty()) {
-				parser.consume(XmlPullParser.START_TAG, depth, type.wrapper);
-				wrapped = depth + 1;
-			}
-
 			parser.consume(XmlPullParser.START_TAG, wrapped, type.name);
 			while (!parser.peek(XmlPullParser.END_TAG, depth)) {
-
 				TypeInfo field = fieldOf(parser.parser.getName());
 				if (field == null) {
-					skip(parser);
+					parser.skip();
 					continue;
 				}
 
@@ -364,6 +322,65 @@ public class XmlParser {
 
 		private TypeInfo fieldOf(String value) {
 			return fields.get(value == null ? VALUE : value);
+		}
+	}
+
+
+	/**
+	 * Internal mapper for enumerated types, returns null in case there are no matches
+	 */
+	private static class EnumParser extends ValueParser<Enum<?>> {
+		private final Enum<?>[] values;
+
+		public EnumParser(Class<?> type) {
+			this.values = (Enum<?>[]) type.getEnumConstants();
+		}
+
+		@Override
+		public Enum<?> valueOf(String name) {
+			for (Enum<?> value : values) {
+				if (name.equals(value.name())) {
+					return value;
+				}
+			}
+			return null;
+		}
+	}
+
+	/**
+	 * Internal mapper for custom types, delegates the conversion to the mapper.
+	 * It can be used for duration, datetime or any other custom format conversion.
+	 */
+	private static class CustomParser extends ValueParser<Object> {
+		private final Mapper<?> mapper;
+
+		public CustomParser(Mapper<?> mapper) {
+			this.mapper = mapper;
+		}
+
+		public CustomParser(Name name) throws Exception {
+			this(name.mapper().getDeclaredConstructor().newInstance());
+		}
+
+		@Override
+		public Object valueOf(String value) throws Exception {
+			return mapper.valueOf(value);
+		}
+	}
+
+	/**
+	 * Internal mapper for non-primitive types, returns null if the value is null, delegates the mapping otherwise.
+	 */
+	private static class OptionalParser extends ValueParser<Object> {
+		private final Mapper<?> mapper;
+
+		public OptionalParser(Mapper<?> mapper) {
+			this.mapper = mapper;
+		}
+
+		@Override
+		public Object valueOf(String value) throws Exception {
+			return value == null ? null : mapper.valueOf(value);
 		}
 	}
 
@@ -514,21 +531,21 @@ public class XmlParser {
 		private final HashMap<Type, ValueParser<?>> cache = new HashMap<>();
 
 		public TypeCache() {
-			cache.put(Boolean.class, boolMapper);
+			cache.put(Boolean.class, new OptionalParser(boolMapper));
 			cache.put(boolean.class, boolMapper);
-			cache.put(Byte.class, byteMapper);
+			cache.put(Byte.class, new OptionalParser(byteMapper));
 			cache.put(byte.class, byteMapper);
-			cache.put(Short.class, shortMapper);
+			cache.put(Short.class, new OptionalParser(shortMapper));
 			cache.put(short.class, shortMapper);
-			cache.put(Integer.class, integerMapper);
+			cache.put(Integer.class, new OptionalParser(integerMapper));
 			cache.put(int.class, integerMapper);
-			cache.put(Long.class, longMapper);
+			cache.put(Long.class, new OptionalParser(longMapper));
 			cache.put(long.class, longMapper);
-			cache.put(Float.class, floatMapper);
+			cache.put(Float.class, new OptionalParser(floatMapper));
 			cache.put(float.class, floatMapper);
-			cache.put(Double.class, doubleMapper);
+			cache.put(Double.class, new OptionalParser(doubleMapper));
 			cache.put(double.class, doubleMapper);
-			cache.put(Character.class, charMapper);
+			cache.put(Character.class, new OptionalParser(charMapper));
 			cache.put(char.class, charMapper);
 			cache.put(Object.class, textMapper);
 			cache.put(String.class, textMapper);
